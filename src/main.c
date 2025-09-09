@@ -22,20 +22,47 @@ typedef enum {
   LED_MODE_COUNT
 } LedMode_TypeDef;
 
-void Delay(uint16_t nCount)
+volatile uint8_t timer_flag = 0;
+
+ INTERRUPT_HANDLER(TIM4_UPD_OVF_IRQHandler, 23)
 {
-  while (nCount--)
-  {
-    __asm__("nop");
-  }
+    TIM4->SR1 &= ~TIM4_SR1_UIF; // Clear interrupt flag
+    timer_flag = 1;             // Signal flag
+}
+
+void TIM4_Config_ms(uint8_t ms)
+{
+    // Stop timer before configuration
+    TIM4->CR1 &= ~TIM4_CR1_CEN;
+    // Disable update interrupt
+    TIM4->IER &= ~TIM4_IER_UIE;
+    // Clear interrupt flag
+    TIM4->SR1 &= ~TIM4_SR1_UIF;
+
+    // Set prescaler to 128 (clock/128)
+    TIM4->PSCR = 0x07;
+    // 1 ms delay
+    TIM4->ARR = 15 * ms;
+
+    // Reset counter
+    TIM4->CNTR = 0;
+
+    // Enable update interrupt
+    TIM4->IER |= TIM4_IER_UIE;
+
+    // Start timer
+    TIM4->CR1 |= TIM4_CR1_CEN;
 }
 
 void DelayMs(uint16_t ms)
 {
-  while (ms--)
-  {
-    Delay(250); // Approximate 1 ms delay
-  }
+    timer_flag = 0;
+    TIM4_Config_ms(ms);
+    rim();                       // Enable global interrupts
+    wfi();                       // Enter deep sleep, wait for interrupt
+    while (!timer_flag);         // Wait for ISR to set flag
+    TIM4->CR1 &= ~TIM4_CR1_CEN;  // Stop timer
+    TIM4->IER &= ~TIM4_IER_UIE;  // Disable timer interrupt
 }
 
 void SetLED(uint8_t left, uint8_t center, uint8_t right)
@@ -77,7 +104,7 @@ void main(void)
   GPIO_Init(LED_GPIO_PORT,    (GPIO_Pin_TypeDef)LED_L_GPIO_PIN,  GPIO_MODE_OUT_PP_LOW_FAST);
   GPIO_Init(LED_GPIO_PORT,    (GPIO_Pin_TypeDef)LED_C_GPIO_PIN,  GPIO_MODE_OUT_PP_LOW_FAST);
   GPIO_Init(LED_GPIO_PORT,    (GPIO_Pin_TypeDef)LED_R_GPIO_PIN,  GPIO_MODE_OUT_PP_LOW_FAST);
-  GPIO_Init(BUTTON_GPIO_PORT, (GPIO_Pin_TypeDef)BUTTON_GPIO_PIN, GPIO_MODE_IN_PU_IT);
+  GPIO_Init(BUTTON_GPIO_PORT, (GPIO_Pin_TypeDef)BUTTON_GPIO_PIN, GPIO_MODE_IN_PU_NO_IT);
 
   while (1)
   {
